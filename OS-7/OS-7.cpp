@@ -50,7 +50,7 @@ int zDelta = 0; //направление колеса мышки
 //Настройки ширины, высоты, размер сетки, цвет сетки, цвет фона по умолчанию
 int width = 320;
 int height = 240;
-int n = 40;
+int n = 9;
 int scrollR = 0;
 int scrollG = 255;
 int scrollB = 255;
@@ -303,11 +303,11 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         hPen = CreatePen(PS_SOLID, 3, scrollColorf);
         SelectObject(hdc, hPen);
         //Начинаем рисовать сетку
-        for (int i = 0; i <= width; i += n) {
+        for (int i = 0; i <= width; i += (width / n) - (width % n)) {
             MoveToEx(hdc, i, 0, NULL);
             LineTo(hdc, i, height);
         }
-        for (int i = 0; i <= height; i += n) {
+        for (int i = 0; i <= height; i += (height / n) - (height % n)) {
             MoveToEx(hdc, 0, i, NULL);
             LineTo(hdc, width, i);
         }
