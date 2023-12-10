@@ -50,7 +50,7 @@ int zDelta = 0; //направление колеса мышки
 //Настройки ширины, высоты, размер сетки, цвет сетки, цвет фона по умолчанию
 int width = 320;
 int height = 240;
-int n = 50;
+int n = 40;
 int scrollR = 0;
 int scrollG = 255;
 int scrollB = 255;
@@ -487,6 +487,11 @@ int main(int argc, char** argv)
         (BYTE)(randB) // blue component of color
     );
 
+    //ОТВЕТ 1
+    //В коде окна не регистрируются (т.е. они не знают о существовании друг друга). 
+    //Вместо этого каждое окно регистрирует сообщение, которое оно может получить.
+    //Если в программе изменился размер окна, цвет сетки, цвет фона или программа нарисовала фигуру, 
+    //то она посылает одно из трёх сообщений всем окнам.
     figChange = RegisterWindowMessageA("newFigures");
     setChange = RegisterWindowMessageA("newSettings");
     backChange = RegisterWindowMessageA("newBack");
@@ -556,18 +561,27 @@ int main(int argc, char** argv)
         DispatchMessage(&message);
     }
 
+    //ОТВЕТ 2
+    //При закрытии программы очищается память, 
+    //записывается и закрывается файл настройки,
+    //выводится сколько ушло времени на запись файла,
+    //закрывается участок разделяемой памяти.
+
     /* Очистка */
     DestroyWindow(hwnd);
     UnregisterClass(szWinClass, hThisInstance);
     DeleteObject(hBrush);
 
-
     //СОХРАНЕНИЕ ДАННЫХ В ФАЙЛ//
     const clock_t write_begin_time = clock();
+
     WriteSettings(buff);
     if (buff != 0) { UnmapViewOfFile(buff); }
     CloseHandle(hMapFile);
+    UnmapViewOfFile(gameMap);
+    CloseHandle(hGameMap);
     if (hFile != NULL) { CloseHandle(hFile); }
+
     total_time = double(clock() - write_begin_time) / (CLOCKS_PER_SEC / 1000);
     //ФАЙЛ СОХРАНЕН//
 
