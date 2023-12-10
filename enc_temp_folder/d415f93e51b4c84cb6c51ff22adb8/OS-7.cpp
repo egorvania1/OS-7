@@ -134,24 +134,16 @@ void WriteSettings(char* buffer)
     sprintf(buffer, set_char);
 }
 
-//Поток отрисовки фона (не рисует решетку или фигуры)
 DWORD WINAPI background(LPVOID param) {
     HWND hwnd = (HWND)param;
     HBRUSH hBrush;
     PAINTSTRUCT ps;
-    int colSwitch = 0; //Переключатель градиента
-    int backR = 0; //Красный
-    int backG = 0; //Зелёный
-    int backB = 0; //Синий
+    int colSwitch = 2;
+    int backR = 0;
+    int backG = 0;
+    int backB = 0;
     while (true) {
-        WaitForSingleObject(backgroundLock, INFINITE); //Мьютекс, если был нажат Enter
-
-        /*
-        Переключатель градиента.
-        Добавлет 1 к одному цвету, отнимает 1 у другого.
-        Если один цвет переполнен, то переключается на другой.
-        Переключение через colSwitch.
-        */
+        WaitForSingleObject(backgroundLock, INFINITE);
         switch (colSwitch)
         {
         case 0:
@@ -179,16 +171,16 @@ DWORD WINAPI background(LPVOID param) {
             else colSwitch = 0;
             break;
         }
-        //cout << "Colors are:" << backR << " " << backG << " " << backB << endl; //Вывод текущего цвета в консоль
-        hdc = BeginPaint(hwnd, &ps); //Начинаем красить
-        hBrush = CreateSolidBrush(RGB(backR, backG, backB)); //Новая кисть для фона
-        DeleteObject((HBRUSH)SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)hBrush)); //Подмена кисточки фона. Получаем старую кисть, которую тут же удаляем. Иначе память переполниться
-        EndPaint(hwnd, &ps); //Заканчиваем красить
-        InvalidateRect(hwnd, NULL, TRUE); //Говорим окну перекраситься (вызывает сообщение WM_PAINT)
-        ReleaseMutex(backgroundLock); //Отпускаем мьютекс, чтобы Enter работал
-        Sleep(100); //Отдыхаем
+        cout << "Colors are:" << backR << " " << backG << " " << backB << endl;
+        hdc = BeginPaint(hwnd, &ps);
+        hBrush = CreateSolidBrush(RGB(backR, backG, backB));
+        DeleteObject((HBRUSH)SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)hBrush));
+        EndPaint(hwnd, &ps);
+        InvalidateRect(hwnd, NULL, TRUE);
+        ReleaseMutex(backgroundLock);
+        Sleep(100);
     }
-    cout << "Oops, thread broke.\n"; //Будет странно, если код сюда дойдёт.
+    cout << "Oops, thread broke.\n";
     return 0;
 }
 
@@ -249,7 +241,6 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             //WriteSettings(buff);
             //PostMessage(HWND_BROADCAST, backChange, NULL, NULL);
 
-            //Удержание отрисовки фона при нажатии Enter
             if (lockFlag) {
                 lockFlag = false;
                 ReleaseMutex(backgroundLock);
