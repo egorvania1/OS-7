@@ -7,11 +7,11 @@
  *
  */
 
+#include <windows.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <tchar.h>
-#include <windows.h>
-#include <time.h>
 
 #include <iostream>
 #include <string>
@@ -22,6 +22,7 @@ using namespace std;
 #define KEY_SHIFTED     0x8000
 #define KEY_TOGGLED     0x0001
 #define FIGUREAMOUNT    100
+#define STACK_SIZE (64*1024) // Размер стека для нового потока
 
 TCHAR szName[] = TEXT("SettingsMappingObject");
 TCHAR szGameName[] = TEXT("GameMappingObject");
@@ -61,6 +62,10 @@ int randB = 255;
 int* gameMap;
 //int appointed = 1;
 bool changed = false;
+
+HANDLE backgroundLock; //Мьютекс изменения фона
+bool lockFlag = false; //Заблокирован ли пользователем мьютекс
+bool isBackground = false; //Находится ли поток на фоновом приоритете
 
 /* Функция запуска блокнота */
 void RunNotepad(void)
@@ -129,6 +134,64 @@ void WriteSettings(char* buffer)
     sprintf(buffer, set_char);
 }
 
+//Поток отрисовки фона (не рисует решетку или фигуры)
+DWORD WINAPI background(LPVOID param) {
+    HWND hwnd = (HWND)param;
+    HBRUSH hBrush;
+    PAINTSTRUCT ps;
+    int colSwitch = 0; //Переключатель градиента
+    int backR = 0; //Красный
+    int backG = 128; //Зелёный
+    int backB = 128; //Синий
+    while (true) {
+        WaitForSingleObject(backgroundLock, INFINITE); //Мьютекс, если был нажат Enter
+
+        /*
+        Переключатель градиента.
+        Добавлет 1 к одному цвету, отнимает 1 у другого.
+        Если один цвет переполнен, то переключается на другой.
+        Переключение через colSwitch.
+        */
+        switch (colSwitch)
+        {
+        case 0:
+            if (backR < 255)
+            {
+                backR++;
+                if (backB > 0) backB--;
+            }
+            else colSwitch = 1;
+            break;
+        case 1:
+            if (backG < 255)
+            {
+                backG++;
+                if (backR > 0) backR--;
+            }
+            else colSwitch = 2;
+            break;
+        case 2:
+            if (backB < 255)
+            {
+                backB++;
+                if (backG > 0) backG--;
+            }
+            else colSwitch = 0;
+            break;
+        }
+        //cout << "Colors are:" << backR << " " << backG << " " << backB << endl; //Вывод текущего цвета в консоль
+        hdc = BeginPaint(hwnd, &ps); //Начинаем красить
+        hBrush = CreateSolidBrush(RGB(backR, backG, backB)); //Новая кисть для фона
+        DeleteObject((HBRUSH)SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)hBrush)); //Подмена кисточки фона. Получаем старую кисть, которую тут же удаляем. Иначе память переполниться
+        EndPaint(hwnd, &ps); //Заканчиваем красить
+        InvalidateRect(hwnd, NULL, TRUE); //Говорим окну перекраситься (вызывает сообщение WM_PAINT)
+        ReleaseMutex(backgroundLock); //Отпускаем мьютекс, чтобы Enter работал
+        Sleep(100); //Отдыхаем
+    }
+    cout << "Oops, thread broke.\n"; //Будет странно, если код сюда дойдёт.
+    return 0;
+}
+
 /*  This function is called by the Windows function DispatchMessage()  */
 LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -137,7 +200,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         (BYTE)(scrollG), // green component of color
         (BYTE)(scrollB) // blue component of color
     );
-
+    PAINTSTRUCT ps;
     if (message == setChange) {
         GetSettings(buff, isGivenN);
         SetWindowPos(hwnd, NULL, 0, 0, width, height, SWP_NOMOVE);
@@ -167,23 +230,59 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             WriteSettings(buff);
             PostMessage(HWND_BROADCAST, setChange, NULL, NULL);
         }
+        return 0;
     case WM_KEYDOWN: //Отработка нажатия клавиатуры
-        if (((GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(0x51) & 0x8000)) || wParam == VK_ESCAPE) //Если нажато Ctrl + Q или Esc закрыть приложение
+        switch (wParam) 
         {
-            PostQuitMessage(0);       /* send a WM_QUIT to the message queue */
+        case VK_RETURN:
+            if (lockFlag) {
+                lockFlag = false;
+                ReleaseMutex(backgroundLock);
+                cout << "Поток разблокирован\n";
+            }
+            else {
+                lockFlag = true;
+                WaitForSingleObject(backgroundLock, INFINITE);
+                cout << "Поток заблокирован\n";
+            }
+            break;
+        default:
+            if (isBackground) {
+                SetThreadPriority(background, THREAD_MODE_BACKGROUND_END);
+                isBackground = false;
+            }
+            break;
+        case 0x31:
+            SetThreadPriority(background, THREAD_MODE_BACKGROUND_BEGIN);
+            isBackground = true;
+            cout << "Фоновый приоритет потока\n";
+            break;
+        case 0x32:
+            SetThreadPriority(background, THREAD_PRIORITY_LOWEST);
+            cout << "Низший приоритет потока\n";
+            break;
+        case 0x33:
+            SetThreadPriority(background, THREAD_PRIORITY_BELOW_NORMAL);
+            cout << "Ниже нормального приоритет потока\n";
+            break;
+        case 0x34:
+            SetThreadPriority(background, THREAD_PRIORITY_NORMAL);
+            cout << "Нормальный приоритет потока\n";
+            break;
+        case 0x35:
+            SetThreadPriority(background, THREAD_PRIORITY_ABOVE_NORMAL);
+            cout << "Выше нормального приоритет потока\n";
+            break;
+        case 0x36:
+            SetThreadPriority(background, THREAD_PRIORITY_HIGHEST);
+            cout << "Наивысочайший приоритет потока\n";
+            break;
+        case 0x37:
+            SetThreadPriority(background, THREAD_PRIORITY_TIME_CRITICAL);
+            cout << "Критический приоритет потока\n";
+            break;
         }
-        else if ((GetAsyncKeyState(VK_SHIFT) & 0x8000) && (GetAsyncKeyState(0x43) & 0x8000)) //Если нажато Shift + C открыть блокнот
-        {
-            RunNotepad();
-        }
-        else if (wParam == VK_RETURN) //Если нажат Enter изменить цвет фона на случайный
-        {
-            randR = rand() % 255;
-            randG = rand() % 255;
-            randB = rand() % 255;
-            WriteSettings(buff);
-            PostMessage(HWND_BROADCAST, backChange, NULL, NULL);
-        }
+
         return 0;
     case WM_MOUSEWHEEL: //Если прокручено колёсико мышки
         zDelta = GET_WHEEL_DELTA_WPARAM(wParam); //Берем направление колесика
@@ -239,6 +338,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 gameMap[gameMap[0] * 3 + 2] = 0;
                 gameMap[0]++;
                 changed = true;
+                ReleaseDC(hwnd, hdc);
             }
 
         }
@@ -285,14 +385,13 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 gameMap[gameMap[0] * 3 + 2] = 1;
                 gameMap[0]++;
                 changed = true;
+                ReleaseDC(hwnd, hdc);
             }
         }
         rDown = 0;
         PostMessage(HWND_BROADCAST, figChange, NULL, NULL);
         return 0;
     case WM_PAINT: //Фунцкия рисования фона
-        //DrawGrid
-        RECT rect;
         PAINTSTRUCT ps;
         hdc = BeginPaint(hwnd, &ps);
         scrollColorf = RGB( //Цвет сетки
@@ -357,7 +456,8 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 
 int main(int argc, char** argv)
 {
-
+    SetConsoleCP(1251);
+    SetConsoleOutputCP(1251);
     LPWSTR* szArgList;
     int argCount;
 
@@ -392,17 +492,14 @@ int main(int argc, char** argv)
     LocalFree(szArgList);
 
     //НАЧАЛО ВВОДА ФАЙЛА//
-    const clock_t read_begin_time = clock();
     bool fileExists = false;
     HANDLE hFile = NULL;
-    HANDLE hMapFile = OpenFileMapping(
+    HANDLE hMapFile = OpenFileMapping( //Пытаемся открыть файл из памяти
         FILE_MAP_ALL_ACCESS,   // read/write access
         FALSE,                 // do not inherit the name
         szName);
-    if (hMapFile == NULL) {
-        //printf("File mapping not found in memory. (error %d)\n", GetLastError());
-        //Берем файл
-        hFile = CreateFile(
+    if (hMapFile == NULL) { //Файла нет в памяти
+        hFile = CreateFile( //Берем файл
             TEXT("settings.txt"),
             GENERIC_READ | GENERIC_WRITE,
             FILE_SHARE_WRITE,
@@ -410,15 +507,13 @@ int main(int argc, char** argv)
             OPEN_ALWAYS,
             FILE_ATTRIBUTE_NORMAL,
             NULL);
-        //Если не смогли, то ошибка
-        if (hFile == INVALID_HANDLE_VALUE)
+        if (hFile == INVALID_HANDLE_VALUE) //Если не смогли сделать файл, то ошибка
         {
             printf("Could not open file (error %d)\n", GetLastError());
             return 2;
         }
-        else if (GetLastError() == 183) { fileExists = true; }
-        //Создаем карту файла
-        if (!fileExists) {
+        else if (GetLastError() == 183) { fileExists = true; } //Файл существует
+        if (!fileExists) { //Создаем карту файла
             string set = to_string(width) + "\r\n" + to_string(height) + "\r\n" + to_string(n) + "\r\n" + to_string(scrollR) + "\r\n" + to_string(scrollG) + "\r\n" + to_string(scrollB) + "\r\n" + to_string(randR) + "\r\n" + to_string(randG) + "\r\n" + to_string(randB) + "\r\n";
             const int length = set.length();
             char* set_char = new char[length + 1];
@@ -444,18 +539,7 @@ int main(int argc, char** argv)
 
     //Создаем обзор карты файла
     buff = (char*)MapViewOfFile(hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, 0);
-
     GetSettings(buff, isGivenN);
-
-    double total_time = double(clock() - read_begin_time) / (CLOCKS_PER_SEC / 1000);
-    //КОНЕЦ ВВОДА ФАЙЛА//
-
-    if (total_time == 0) {
-        cout << "Reading time: TOO SHORT" << endl;
-    }
-    else {
-        cout << "Reading time: " << total_time << " millisecond" << endl;
-    }
 
     bool mapExists = true;
 
@@ -542,6 +626,9 @@ int main(int argc, char** argv)
     /* Make the window visible on the screen */
     ShowWindow(hwnd, nCmdShow);
 
+    backgroundLock = CreateMutex(NULL, FALSE, NULL);
+    CreateThread(NULL, STACK_SIZE, background, (LPVOID)hwnd, 0, NULL);
+
     /* Run the message loop. It will run until GetMessage() returns 0 */
     //Обработка сообщений от приложения
     while ((bMessageOk = GetMessage(&message, NULL, 0, 0)) != 0)
@@ -561,36 +648,18 @@ int main(int argc, char** argv)
         DispatchMessage(&message);
     }
 
-    //ОТВЕТ 2
-    //При закрытии программы очищается память, 
-    //записывается и закрывается файл настройки,
-    //выводится сколько ушло времени на запись файла,
-    //закрывается участок разделяемой памяти.
+    //СОХРАНЕНИЕ ДАННЫХ В ФАЙЛ//
+    WriteSettings(buff);
 
     /* Очистка */
     DestroyWindow(hwnd);
     UnregisterClass(szWinClass, hThisInstance);
     DeleteObject(hBrush);
-
-    //СОХРАНЕНИЕ ДАННЫХ В ФАЙЛ//
-    const clock_t write_begin_time = clock();
-
-    WriteSettings(buff);
     if (buff != 0) { UnmapViewOfFile(buff); }
     CloseHandle(hMapFile);
     UnmapViewOfFile(gameMap);
     CloseHandle(hGameMap);
     if (hFile != NULL) { CloseHandle(hFile); }
-
-    total_time = double(clock() - write_begin_time) / (CLOCKS_PER_SEC / 1000);
-    //ФАЙЛ СОХРАНЕН//
-
-    if (total_time == 0) {
-        cout << "Writing time: TOO SHORT" << endl;
-    }
-    else {
-        cout << "Writing time: " << total_time << " millisecond" << endl;
-    }
 
     return 0;
 }
