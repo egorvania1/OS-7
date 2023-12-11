@@ -21,7 +21,6 @@ using namespace std;
 
 #define KEY_SHIFTED     0x8000
 #define KEY_TOGGLED     0x0001
-#define FIGUREAMOUNT    100
 #define STACK_SIZE (64*1024) // Размер стека для нового потока
 
 TCHAR szName[] = TEXT("SettingsMappingObject");
@@ -48,15 +47,20 @@ int yMousePos = 0; //позиция мышки по у
 int zDelta = 0; //направление колеса мышки
 
 //Настройки ширины, высоты, размер сетки, цвет сетки, цвет фона по умолчанию
-int width = 300;
-int height = 300;
+int realWidth = 300;
+int realHeight = 300;
+int width = realWidth - 17;
+int height = realHeight - 39;
 int n = 3;
+#define FIGUREAMOUNT (n*n)*3+1
 int gridR = 0;
 int gridG = 255;
 int gridB = 255;
 
+int gridWidth = width / n;
+int gridHeight = height / n;
+
 int* gameMap;
-//int appointed = 1;
 
 HANDLE backgroundLock; //Мьютекс изменения фона
 bool lockFlag = false; //Заблокирован ли пользователем мьютекс
@@ -101,8 +105,8 @@ void GetSettings(char* buffer, bool flag)
             curLine = settings.substr(start, (end - start));
             if (settings[i + 1] != NULL) { start = i + 1; }
             switch (countF) {
-            case 0: {width = stoi(curLine); break; }
-            case 1: {height = stoi(curLine); break; }
+            case 0: {realWidth = stoi(curLine); break; }
+            case 1: {realHeight = stoi(curLine); break; }
             case 2: {if (flag == 0) { n = stoi(curLine); }; break; }
             case 3: {gridR = stoi(curLine); break; }
             case 4: {gridG = stoi(curLine); break; }
@@ -115,12 +119,17 @@ void GetSettings(char* buffer, bool flag)
 
 void WriteSettings(char* buffer)
 {
-    string set = to_string(width) + "\r\n" + to_string(height) + "\r\n" + to_string(n) + "\r\n" + to_string(gridR) + "\r\n" + to_string(gridG) + "\r\n" + to_string(gridB) + "\r\n";
+    string set = to_string(realWidth) + "\r\n" + to_string(realHeight) + "\r\n" + to_string(n) + "\r\n" + to_string(gridR) + "\r\n" + to_string(gridG) + "\r\n" + to_string(gridB) + "\r\n";
     char* set_char = new char[set.length() + 1];
     strcpy(set_char, set.c_str());
     size_t size = strlen(set_char);
 
     sprintf(buffer, set_char);
+}
+
+void GameCheck()
+{
+    if (gameMap[0] == n*n+1) { MessageBox(NULL, L"Ничья!", L"Игра окончена", MB_OK); }
 }
 
 //Поток отрисовки фона (не рисует решетку или фигуры)
@@ -186,7 +195,11 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 {
     if (message == setChange) {
         GetSettings(buff, isGivenN);
-        SetWindowPos(hwnd, NULL, 0, 0, width, height, SWP_NOMOVE);
+        SetWindowPos(hwnd, NULL, 0, 0, realWidth, realHeight, SWP_NOMOVE);
+        width = realWidth - 17;
+        height = realHeight - 39;
+        gridWidth = width / n;
+        gridHeight = height / n;
         InvalidateRect(hwnd, NULL, TRUE);
     }
     else if (message == figChange) {
@@ -197,8 +210,8 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_SIZE:
         if (GetWindowRect(hwnd, &rect))
         {
-            width = rect.right - rect.left;
-            height = rect.bottom - rect.top;
+            realWidth = rect.right - rect.left;
+            realHeight = rect.bottom - rect.top;
             WriteSettings(buff);
             PostMessage(HWND_BROADCAST, setChange, NULL, NULL);
         }
@@ -264,10 +277,10 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         if (lDown)
         {
             bool exists = false;
-            xMousePos = (xMousePos / n) * n + n / 2;
-            yMousePos = (yMousePos / n) * n + n / 2;
+            int xCenter = (xMousePos / gridWidth) * gridWidth + gridWidth / 2;
+            int yCenter = (yMousePos / gridHeight) * gridHeight + gridHeight / 2;
             for (int i = 1; i < gameMap[0]; i++) {
-                if (gameMap[i * 3] == xMousePos and gameMap[i * 3 + 1] == yMousePos) {
+                if (gameMap[i * 3] == xCenter and gameMap[i * 3 + 1] == yCenter) {
                     exists = true;
                     break;
                 }
@@ -276,22 +289,27 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 MessageBox(NULL, L"Фигура уже существует в данном поле!", L"Ошибка", MB_OK);
             }
             else {
+                int leftC = xCenter - gridWidth / 2;
+                int topC = yCenter - gridHeight / 2;
+                int rightC = xCenter + gridWidth / 2;
+                int bottomC = yCenter + gridHeight / 2;
                 hdc = GetDC(hwnd);
                 hPen = CreatePen(PS_SOLID, 3, RGB(255, 0, 0));
                 hBrush = CreateSolidBrush(RGB(255, 255, 255));
                 SelectObject(hdc, hBrush);
                 SelectObject(hdc, hPen);
-                Ellipse(hdc, xMousePos - n / 2, yMousePos - n / 2, xMousePos + n / 2, yMousePos + n / 2);
+                Ellipse(hdc, leftC, topC, rightC, bottomC);
                 DeleteObject(hBrush);
                 DeleteObject(hPen);
                 ReleaseDC(hwnd, hdc);
-                gameMap[gameMap[0] * 3] = xMousePos; //Куда записать коодинату х
-                gameMap[gameMap[0] * 3 + 1] = yMousePos; //Куда записать коодинату у
-                gameMap[gameMap[0] * 3 + 2] = 0; //Тип записанной фигуры
+                int cellNum = ((xCenter - gridWidth / 2) / gridWidth) + n * ((yCenter - gridHeight / 2) / gridHeight) + 1; //Номер клетки, в которую поставили фигуру
+                gameMap[3 * cellNum - 2] = xCenter; //Куда записать коодинату х
+                gameMap[3 * cellNum - 1] = yCenter; //Куда записать коодинату у
+                gameMap[3 * cellNum] = 0; //Тип записанной фигуры
                 gameMap[0]++; //Увеличиваем кол-во фигур
                 ReleaseDC(hwnd, hdc);
             }
-
+            GameCheck();
         }
         lDown = 0;
         PostMessage(HWND_BROADCAST, figChange, NULL, NULL);
@@ -306,14 +324,10 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         {
             //Левый верхний угол
             bool exists = false;
-            int xMousePos_ch = (xMousePos / n) * n + n / 2;
-            int yMousePos_ch = (yMousePos / n) * n + n / 2;
-
-            xMousePos = (xMousePos / n) * n;
-            yMousePos = (yMousePos / n) * n;
-
+            int xCenter = (xMousePos / gridWidth) * gridWidth + gridWidth / 2;
+            int yCenter = (yMousePos / gridHeight) * gridHeight + gridHeight / 2;
             for (int i = 1; i < gameMap[0]; i++) {
-                if (gameMap[i * 3] == xMousePos_ch and gameMap[i * 3 + 1] == yMousePos_ch) {
+                if (gameMap[i * 3] == xCenter and gameMap[i * 3 + 1] == yCenter) {
                     exists = true;
                     break;
                 }
@@ -322,21 +336,26 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 MessageBox(NULL, L"Фигура уже существует в данном поле!", L"Ошибка", MB_OK);
             }
             else {
+                int leftX = (xMousePos / gridWidth) * gridWidth;
+                int topX = (yMousePos / gridHeight) * gridHeight;
+                int rightX = leftX + gridWidth;
+                int bottomX = topX + gridHeight;
                 hdc = GetDC(hwnd);
                 hPen = CreatePen(PS_SOLID, 3, RGB(0, 255, 0));
                 SelectObject(hdc, hPen);
-                MoveToEx(hdc, xMousePos, yMousePos, NULL);
-                LineTo(hdc, xMousePos + n, yMousePos + n);
-                MoveToEx(hdc, xMousePos + n, yMousePos, NULL);
-                LineTo(hdc, xMousePos, yMousePos + n);
+                MoveToEx(hdc, leftX, topX, NULL);
+                LineTo(hdc, rightX, bottomX);
+                MoveToEx(hdc, rightX, topX, NULL);
+                LineTo(hdc, leftX, bottomX);
                 DeleteObject(hPen);
                 ReleaseDC(hwnd, hdc);
-                gameMap[gameMap[0] * 3] = xMousePos_ch;
-                gameMap[gameMap[0] * 3 + 1] = yMousePos_ch;
-                gameMap[gameMap[0] * 3 + 2] = 1;
+                int cellNum = ((xCenter - gridWidth / 2) / gridWidth) + n * ((yCenter - gridHeight / 2) / gridHeight) + 1; //Номер клетки, в которую поставили фигуру
+                gameMap[3 * cellNum - 2] = xCenter;
+                gameMap[3 * cellNum - 1] = yCenter;
+                gameMap[3 * cellNum] = 1;
                 gameMap[0]++;
-                ReleaseDC(hwnd, hdc);
             }
+            GameCheck();
         }
         rDown = 0;
         PostMessage(HWND_BROADCAST, figChange, NULL, NULL);
@@ -347,11 +366,11 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         hPen = CreatePen(PS_SOLID, 3, RGB(gridR, gridG, gridB));
         SelectObject(hdc, hPen);
         //Начинаем рисовать сетку
-        for (int i = 0; i <= width; i += n) {
+        for (int i = 0; i <= width; i += gridWidth) {
             MoveToEx(hdc, i, 0, NULL);
             LineTo(hdc, i, height);
         }
-        for (int i = 0; i <= height; i += n) {
+        for (int i = 0; i <= height; i += gridHeight) {
             MoveToEx(hdc, 0, i, NULL);
             LineTo(hdc, width, i);
         }
@@ -362,29 +381,41 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         SelectObject(hdc, hBrush);
 
         int xPos, yPos;
-        for (int i = 1; i < gameMap[0]; i++) {
-            xPos = gameMap[i * 3];
-            yPos = gameMap[i * 3 + 1];
-            if (gameMap[i * 3 + 2] == 0)
-            {
-                hPen = CreatePen(PS_SOLID, 3, RGB(255, 0, 0));
-                SelectObject(hdc, hPen);
-                Ellipse(hdc, xPos - n / 2, yPos - n / 2, xPos + n / 2, yPos + n / 2);
-                DeleteObject(hPen);
-            }
-            else if (gameMap[i * 3 + 2] == 1)
-            {
-                xPos -= n / 2;
-                yPos -= n / 2;
-                hPen = CreatePen(PS_SOLID, 3, RGB(0, 255, 0));
-                SelectObject(hdc, hPen);
-                MoveToEx(hdc, xPos, yPos, NULL);
-                LineTo(hdc, xPos + n, yPos + n);
-                MoveToEx(hdc, xPos + n, yPos, NULL);
-                LineTo(hdc, xPos, yPos + n);
-                DeleteObject(hPen);
+        for (int i = 1; i <= n*n*3+1; i+=3) {
+            if (gameMap[i] != NULL) {
+                xPos = gameMap[i];
+                yPos = gameMap[i + 1];
+                //cout << gameMap[i] << " " << gameMap[i+1] << " " << gameMap[i+2] << "\n";
+                if (gameMap[i + 2] == 0)
+                {
+                    int leftC = xPos - gridWidth / 2;
+                    int topC = yPos - gridHeight / 2;
+                    int rightC = xPos + gridWidth / 2;
+                    int bottomC = yPos + gridHeight / 2;
+                    hPen = CreatePen(PS_SOLID, 3, RGB(255, 0, 0));
+                    SelectObject(hdc, hPen);
+                    Ellipse(hdc, leftC, topC, rightC, bottomC);
+                    DeleteObject(hPen);
+                }
+                else if (gameMap[i + 2] == 1)
+                {
+                    int leftX = xPos - gridWidth / 2;
+                    int topX = yPos - gridHeight / 2;
+                    int rightX = leftX + gridWidth;
+                    int bottomX = topX + gridHeight;
+                    hPen = CreatePen(PS_SOLID, 3, RGB(0, 255, 0));
+                    SelectObject(hdc, hPen);
+                    MoveToEx(hdc, leftX, topX, NULL);
+                    LineTo(hdc, rightX, bottomX);
+                    MoveToEx(hdc, rightX, topX, NULL);
+                    LineTo(hdc, leftX, bottomX);
+                    DeleteObject(hPen);
+                }
             }
         }
+
+
+        //for (int i = 0; i <= n * 3 + 1; i++) { if (gameMap[i] != NULL) { cout << gameMap[i] << " "; } } cout << endl;
 
         //Отчистка
         DeleteObject(hBrush);
@@ -460,7 +491,7 @@ int main(int argc, char** argv)
         else if (GetLastError() == 183) { fileExists = true; } //Файл существует
         if (!fileExists) { //Создаем карту файла
 
-            string set = to_string(width) + "\r\n" + to_string(height) + "\r\n" + to_string(n) + "\r\n" + to_string(gridR) + "\r\n" + to_string(gridG) + "\r\n" + to_string(gridB) + "\r\n";
+            string set = to_string(realWidth) + "\r\n" + to_string(realHeight) + "\r\n" + to_string(n) + "\r\n" + to_string(gridR) + "\r\n" + to_string(gridG) + "\r\n" + to_string(gridB) + "\r\n";
             char* set_char = new char[set.length() + 1];
             strcpy(set_char, set.c_str());
             size_t size = strlen(set_char);
@@ -546,11 +577,13 @@ int main(int argc, char** argv)
     hwnd = CreateWindow(
         szWinClass,          /* Classname */
         szWinName,           /* Title Text */
-        WS_OVERLAPPEDWINDOW, /* default window */
+        WS_OVERLAPPED | 
+        WS_CAPTION | 
+        WS_SYSMENU,          /* default window */
         CW_USEDEFAULT,       /* Windows decides the position */
         CW_USEDEFAULT,       /* where the window ends up on the screen */
-        width,               /* The programs width */
-        height,              /* and height in pixels */
+        realWidth,               /* The programs width */
+        realHeight,              /* and height in pixels */
         HWND_DESKTOP,        /* The window is a child-window to desktop */
         NULL,                /* No menu */
         hThisInstance,       /* Program Instance handler */
