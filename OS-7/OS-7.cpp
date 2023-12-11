@@ -35,33 +35,28 @@ HDC hdc;
 HPEN hPen;
 UINT figChange;
 UINT setChange;
-UINT backChange;
 RECT rect;
 
 char* buff;
 bool isGivenN = false;
 
-boolean lDown = 0;
-boolean rDown = 0;
+boolean lDown = 0; //Нажат ЛКМ
+boolean rDown = 0; //Нажат ПКМ
 
 int xMousePos = 0; //позиция мышки по х
 int yMousePos = 0; //позиция мышки по у
 int zDelta = 0; //направление колеса мышки
 
 //Настройки ширины, высоты, размер сетки, цвет сетки, цвет фона по умолчанию
-int width = 320;
-int height = 240;
-int n = 40;
-int scrollR = 0;
-int scrollG = 255;
-int scrollB = 255;
-int randR = 0;
-int randG = 0;
-int randB = 255;
+int width = 300;
+int height = 300;
+int n = 3;
+int gridR = 0;
+int gridG = 255;
+int gridB = 255;
 
 int* gameMap;
 //int appointed = 1;
-bool changed = false;
 
 HANDLE backgroundLock; //Мьютекс изменения фона
 bool lockFlag = false; //Заблокирован ли пользователем мьютекс
@@ -86,7 +81,6 @@ void RunNotepad(void)
 
 void GetSettings(char* buffer, bool flag)
 {
-    int countF = 0;
     //Переводим в string
     string settings = buffer;
 
@@ -96,11 +90,11 @@ void GetSettings(char* buffer, bool flag)
         settings[settings.find("\r\n")] = ' ';
     }
 
-    int start = 0;
-    int end;
-    string curLine;
-
     //Ввод настроек
+    int start = 0; //Начало линии
+    int end; //Конец линии
+    string curLine; //Текущая линия
+    int countF = 0; //Текущая настройка
     for (int i = 0; i < settings.length(); i++) {
         if (settings[i] == ' ') {
             end = i;
@@ -110,12 +104,9 @@ void GetSettings(char* buffer, bool flag)
             case 0: {width = stoi(curLine); break; }
             case 1: {height = stoi(curLine); break; }
             case 2: {if (flag == 0) { n = stoi(curLine); }; break; }
-            case 3: {scrollR = stoi(curLine); break; }
-            case 4: {scrollG = stoi(curLine); break; }
-            case 5: {scrollB = stoi(curLine); break; }
-            case 6: {randR = stoi(curLine); break; }
-            case 7: {randG = stoi(curLine); break; }
-            case 8: {randB = stoi(curLine); break; }
+            case 3: {gridR = stoi(curLine); break; }
+            case 4: {gridG = stoi(curLine); break; }
+            case 5: {gridB = stoi(curLine); break; }
             }
             countF++;
         }
@@ -124,10 +115,8 @@ void GetSettings(char* buffer, bool flag)
 
 void WriteSettings(char* buffer)
 {
-    string set = to_string(width) + "\r\n" + to_string(height) + "\r\n" + to_string(n) + "\r\n" + to_string(scrollR) + "\r\n" + to_string(scrollG) + "\r\n" + to_string(scrollB) + "\r\n" + to_string(randR) + "\r\n" + to_string(randG) + "\r\n" + to_string(randB) + "\r\n";
-    const int length = set.length();
-
-    char* set_char = new char[length + 1];
+    string set = to_string(width) + "\r\n" + to_string(height) + "\r\n" + to_string(n) + "\r\n" + to_string(gridR) + "\r\n" + to_string(gridG) + "\r\n" + to_string(gridB) + "\r\n";
+    char* set_char = new char[set.length() + 1];
     strcpy(set_char, set.c_str());
     size_t size = strlen(set_char);
 
@@ -195,29 +184,12 @@ DWORD WINAPI background(LPVOID param) {
 /*  This function is called by the Windows function DispatchMessage()  */
 LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    COLORREF scrollColorf = RGB(
-        (BYTE)(scrollR), // red component of color
-        (BYTE)(scrollG), // green component of color
-        (BYTE)(scrollB) // blue component of color
-    );
-    PAINTSTRUCT ps;
     if (message == setChange) {
         GetSettings(buff, isGivenN);
         SetWindowPos(hwnd, NULL, 0, 0, width, height, SWP_NOMOVE);
         InvalidateRect(hwnd, NULL, TRUE);
     }
     else if (message == figChange) {
-        InvalidateRect(hwnd, NULL, TRUE);
-    }
-    else if (message == backChange) {
-        GetSettings(buff, isGivenN);
-        COLORREF randColorf = RGB(
-            (BYTE)(randR), // red component of color
-            (BYTE)(randG), // green component of color
-            (BYTE)(randB) // blue component of color
-        );
-        hBrush = CreateSolidBrush(randColorf);
-        DeleteObject((HBRUSH)SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)hBrush));
         InvalidateRect(hwnd, NULL, TRUE);
     }
     switch (message)                  /* handle the messages */
@@ -282,26 +254,6 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             cout << "Критический приоритет потока\n";
             break;
         }
-
-        return 0;
-    case WM_MOUSEWHEEL: //Если прокручено колёсико мышки
-        zDelta = GET_WHEEL_DELTA_WPARAM(wParam); //Берем направление колесика
-        if (zDelta == 120) //Если прокрутка вверх
-        {
-            if (scrollR < 255) scrollR++;
-            else if (scrollG < 255) scrollG++;
-            else if (scrollB < 255) scrollB++;
-            InvalidateRect(hwnd, NULL, TRUE);
-        }
-        else //Если прокрутка вниз
-        {
-            if (scrollR > 0) scrollR--;
-            else if (scrollG > 0) scrollG--;
-            else if (scrollB > 0) scrollB--;
-            InvalidateRect(hwnd, NULL, TRUE);
-        }
-        WriteSettings(buff);
-        PostMessage(HWND_BROADCAST, setChange, NULL, NULL);
         return 0;
     case WM_LBUTTONDOWN: //Если зажата левая кнопка мышки запомнить местоположение курсора
         xMousePos = LOWORD(lParam);
@@ -333,11 +285,10 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 DeleteObject(hBrush);
                 DeleteObject(hPen);
                 ReleaseDC(hwnd, hdc);
-                gameMap[gameMap[0] * 3] = xMousePos;
-                gameMap[gameMap[0] * 3 + 1] = yMousePos;
-                gameMap[gameMap[0] * 3 + 2] = 0;
-                gameMap[0]++;
-                changed = true;
+                gameMap[gameMap[0] * 3] = xMousePos; //Куда записать коодинату х
+                gameMap[gameMap[0] * 3 + 1] = yMousePos; //Куда записать коодинату у
+                gameMap[gameMap[0] * 3 + 2] = 0; //Тип записанной фигуры
+                gameMap[0]++; //Увеличиваем кол-во фигур
                 ReleaseDC(hwnd, hdc);
             }
 
@@ -384,7 +335,6 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 gameMap[gameMap[0] * 3 + 1] = yMousePos_ch;
                 gameMap[gameMap[0] * 3 + 2] = 1;
                 gameMap[0]++;
-                changed = true;
                 ReleaseDC(hwnd, hdc);
             }
         }
@@ -394,12 +344,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_PAINT: //Фунцкия рисования фона
         PAINTSTRUCT ps;
         hdc = BeginPaint(hwnd, &ps);
-        scrollColorf = RGB( //Цвет сетки
-            (BYTE)(scrollR), // red component of color
-            (BYTE)(scrollG), // green component of color
-            (BYTE)(scrollB) // blue component of color
-        );
-        hPen = CreatePen(PS_SOLID, 3, scrollColorf);
+        hPen = CreatePen(PS_SOLID, 3, RGB(gridR, gridG, gridB));
         SelectObject(hdc, hPen);
         //Начинаем рисовать сетку
         for (int i = 0; i <= width; i += n) {
@@ -514,11 +459,12 @@ int main(int argc, char** argv)
         }
         else if (GetLastError() == 183) { fileExists = true; } //Файл существует
         if (!fileExists) { //Создаем карту файла
-            string set = to_string(width) + "\r\n" + to_string(height) + "\r\n" + to_string(n) + "\r\n" + to_string(scrollR) + "\r\n" + to_string(scrollG) + "\r\n" + to_string(scrollB) + "\r\n" + to_string(randR) + "\r\n" + to_string(randG) + "\r\n" + to_string(randB) + "\r\n";
-            const int length = set.length();
-            char* set_char = new char[length + 1];
+
+            string set = to_string(width) + "\r\n" + to_string(height) + "\r\n" + to_string(n) + "\r\n" + to_string(gridR) + "\r\n" + to_string(gridG) + "\r\n" + to_string(gridB) + "\r\n";
+            char* set_char = new char[set.length() + 1];
             strcpy(set_char, set.c_str());
             size_t size = strlen(set_char);
+
             HANDLE hFileMapping = CreateFileMapping(hFile, NULL, PAGE_READWRITE, 0, size, NULL);
             if (hFileMapping == NULL) {
                 printf("Could not create mapping (error %d)\n", GetLastError());
@@ -565,20 +511,8 @@ int main(int argc, char** argv)
         gameMap[0] = 1;
     }
 
-    COLORREF randColorf = RGB( //Цвет фона
-        (BYTE)(randR), // red component of color
-        (BYTE)(randG), // green component of color
-        (BYTE)(randB) // blue component of color
-    );
-
-    //ОТВЕТ 1
-    //В коде окна не регистрируются (т.е. они не знают о существовании друг друга). 
-    //Вместо этого каждое окно регистрирует сообщение, которое оно может получить.
-    //Если в программе изменился размер окна, цвет сетки, цвет фона или программа нарисовала фигуру, 
-    //то она посылает одно из трёх сообщений всем окнам.
     figChange = RegisterWindowMessageA("newFigures");
     setChange = RegisterWindowMessageA("newSettings");
-    backChange = RegisterWindowMessageA("newBack");
 
     //Настройка генератора случайных чисел от времени
     time_t t;
@@ -600,7 +534,7 @@ int main(int argc, char** argv)
     RegisterHotKey(hwnd, 1, MOD_CONTROL | MOD_NOREPEAT, 0x51);
 
     /* Use custom brush to paint the background of the window */
-    hBrush = CreateSolidBrush(randColorf);
+    hBrush = CreateSolidBrush(RGB(0, 0, 255));
     wincl.hbrBackground = hBrush;
 
     /* Register the window class, and if it fails quit the program */
