@@ -234,7 +234,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_KEYDOWN: //Отработка нажатия клавиатуры
         switch (wParam) 
         {
-        case VK_RETURN:
+        case VK_SPACE:
             if (lockFlag) {
                 lockFlag = false;
                 ReleaseMutex(backgroundLock);
