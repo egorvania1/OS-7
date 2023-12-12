@@ -35,6 +35,7 @@ HDC hdc;
 HPEN hPen;
 UINT figChange;
 UINT setChange;
+UINT gameOver;
 RECT rect;
 
 char* buff;
@@ -68,6 +69,8 @@ bool lockFlag = false; //Заблокирован ли пользователе�
 bool isBackground = false; //Находится ли поток на фоновом приоритете
 
 HANDLE turnLock; //Мьютекс запрета хода
+
+CRITICAL_SECTION gameover;  
 
 /* Функция запуска блокнота */
 void RunNotepad(void)
@@ -137,7 +140,6 @@ int GameCheck()
         if (gameMap[3 * i] != NULL && gameMap[3 * i + 3] != NULL && gameMap[3 * i + 6] != NULL &&
             ((gameMap[3 * i] == gameMap[3 * i + 3]) && (gameMap[3 * i] == gameMap[3 * i + 6]))) //По горизонтали
         {
-            cout << "true";
             switch (gameMap[3 * i]) {
             case 1:
                 MessageBox(NULL, L"Победа ноликов!", L"Игра окончена", MB_OK);
@@ -154,7 +156,6 @@ int GameCheck()
         if (gameMap[i] != NULL && gameMap[i + 9] != NULL && gameMap[i + 18] != NULL &&
             ((gameMap[i] == gameMap[i + 9]) && (gameMap[i] == gameMap[i + 18]))) //По вертикали
         {
-            cout << "true";
             switch (gameMap[i]) {
             case 1:
                 MessageBox(NULL, L"Победа ноликов!", L"Игра окончена", MB_OK);
@@ -270,7 +271,11 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         InvalidateRect(hwnd, NULL, TRUE);
     }
     else if (message == figChange) {
+        GameCheck();
         InvalidateRect(hwnd, NULL, TRUE);
+    }
+    else if (message == gameOver) {
+        ExitProcess(0);
     }
     switch (message)                  /* handle the messages */
     {
@@ -343,7 +348,8 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_LBUTTONUP: //Если отжата левая кнопка мышки нарисовать круг
         if (lDown)
         {
-            if (WaitForSingleObject(turnLock, 0) == WAIT_TIMEOUT) { return 0; }
+            if (gameMap[0] % 2 != 0 && WaitForSingleObject(turnLock, 0) == WAIT_TIMEOUT || gameMap[0] % 2 == 0 && WaitForSingleObject(turnLock, 0) != WAIT_TIMEOUT) 
+            { return 0; }
             bool exists = false;
             int xCenter = (xMousePos / gridWidth) * gridWidth + gridWidth / 2;
             int yCenter = (yMousePos / gridHeight) * gridHeight + gridHeight / 2;
@@ -398,7 +404,9 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 cout << gameMap[3 * cellNum] << endl;
                 gameMap[0]++;
             }
-            GameCheck();
+            if (GameCheck()) {
+                PostMessage(HWND_BROADCAST, gameOver, NULL, NULL);
+            }
         }
         lDown = 0;
         PostMessage(HWND_BROADCAST, figChange, NULL, NULL);
@@ -465,6 +473,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         EndPaint(hwnd, &ps);
         return 0;
     case WM_DESTROY: //Уничтожение окна
+        EnterCriticalSection(&gameover);
         PostQuitMessage(0);       /* send a WM_QUIT to the message queue */
         return 0;
     }
@@ -587,6 +596,7 @@ int main(int argc, char** argv)
 
     figChange = RegisterWindowMessageA("newFigures");
     setChange = RegisterWindowMessageA("newSettings");
+    gameOver = RegisterWindowMessageA("gameIsOver");
 
     //Настройка генератора случайных чисел от времени
     time_t t;
@@ -641,6 +651,7 @@ int main(int argc, char** argv)
     if ((turnLock = OpenMutex(NULL, FALSE, szLockName)) == NULL) {
         turnLock = CreateMutex(NULL, FALSE, szLockName);
     }
+    InitializeCriticalSection(&gameover);
     
     /* Run the message loop. It will run until GetMessage() returns 0 */
     //Обработка сообщений от приложения
@@ -663,7 +674,6 @@ int main(int argc, char** argv)
 
     //СОХРАНЕНИЕ ДАННЫХ В ФАЙЛ//
     WriteSettings(buff);
-
     /* Очистка */
     DestroyWindow(hwnd);
     UnregisterClass(szWinClass, hThisInstance);
@@ -673,6 +683,8 @@ int main(int argc, char** argv)
     UnmapViewOfFile(gameMap);
     CloseHandle(hGameMap);
     if (hFile != NULL) { CloseHandle(hFile); }
-
+    if (backgroundLock != 0) DeleteObject(backgroundLock);
+    if (turnLock != 0) DeleteObject(turnLock);
+    LeaveCriticalSection(&gameover);
     return 0;
 }
