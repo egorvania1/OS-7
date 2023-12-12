@@ -25,6 +25,7 @@ using namespace std;
 
 TCHAR szName[] = TEXT("SettingsMappingObject");
 TCHAR szGameName[] = TEXT("GameMappingObject");
+TCHAR szLockName[] = TEXT("TurnLockerObject");
 
 const TCHAR szWinClass[] = _T("Win32SampleApp");
 const TCHAR szWinName[] = _T("Win32SampleWindow");
@@ -65,6 +66,8 @@ int* gameMap;
 HANDLE backgroundLock; //Мьютекс изменения фона
 bool lockFlag = false; //Заблокирован ли пользователем мьютекс
 bool isBackground = false; //Находится ли поток на фоновом приоритете
+
+HANDLE turnLock; //Мьютекс запрета хода
 
 /* Функция запуска блокнота */
 void RunNotepad(void)
@@ -127,9 +130,73 @@ void WriteSettings(char* buffer)
     sprintf(buffer, set_char);
 }
 
-void GameCheck()
+int GameCheck()
 {
-    if (gameMap[0] == n*n+1) { MessageBox(NULL, L"Ничья!", L"Игра окончена", MB_OK); }
+    for (int i = 1; i <= n * n; i += n) {
+        //cout << gameMap[3 * i] << gameMap[3 * i + 3] << gameMap[3 * i + 6] << endl;
+        if (gameMap[3 * i] != NULL && gameMap[3 * i + 3] != NULL && gameMap[3 * i + 6] != NULL &&
+            ((gameMap[3 * i] == gameMap[3 * i + 3]) && (gameMap[3 * i] == gameMap[3 * i + 6]))) //По горизонтали
+        {
+            cout << "true";
+            switch (gameMap[3 * i]) {
+            case 1:
+                MessageBox(NULL, L"Победа ноликов!", L"Игра окончена", MB_OK);
+                break;
+            case 2:
+                MessageBox(NULL, L"Победа крестиков!", L"Игра окончена", MB_OK);
+                break;
+            }
+            return 1;
+        }
+    }
+    for (int i = 3; i <= n*n; i+=n) 
+    {
+        if (gameMap[i] != NULL && gameMap[i + 9] != NULL && gameMap[i + 18] != NULL &&
+            ((gameMap[i] == gameMap[i + 9]) && (gameMap[i] == gameMap[i + 18]))) //По вертикали
+        {
+            cout << "true";
+            switch (gameMap[i]) {
+            case 1:
+                MessageBox(NULL, L"Победа ноликов!", L"Игра окончена", MB_OK);
+                break;
+            case 2:
+                MessageBox(NULL, L"Победа крестиков!", L"Игра окончена", MB_OK);
+                break;
+            }
+            return 1;
+        }
+    }
+
+    //Проверка диагоналей
+    if (gameMap[3] != NULL && gameMap[15] != NULL && gameMap[27] != NULL &&
+        ((gameMap[3] == gameMap[15]) && (gameMap[3] == gameMap[27])))
+    {
+        switch (gameMap[3]) {
+        case 1:
+            MessageBox(NULL, L"Победа ноликов!", L"Игра окончена", MB_OK);
+            break;
+        case 2:
+            MessageBox(NULL, L"Победа крестиков!", L"Игра окончена", MB_OK);
+            break;
+        }
+        return 1;
+    }
+    else if (gameMap[9] != NULL && gameMap[15] != NULL && gameMap[21] != NULL &&
+        ((gameMap[9] == gameMap[15]) && (gameMap[9] == gameMap[21])))
+    {
+        switch (gameMap[9]) {
+        case 1:
+            MessageBox(NULL, L"Победа ноликов!", L"Игра окончена", MB_OK);
+            break;
+        case 2:
+            MessageBox(NULL, L"Победа крестиков!", L"Игра окончена", MB_OK);
+            break;
+        }
+        return 1;
+    }
+
+    if (gameMap[0] == n * n + 1) { MessageBox(NULL, L"Ничья!", L"Игра окончена", MB_OK); return 1; }
+    return 0;
 }
 
 //Поток отрисовки фона (не рисует решетку или фигуры)
@@ -276,6 +343,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_LBUTTONUP: //Если отжата левая кнопка мышки нарисовать круг
         if (lDown)
         {
+            if (WaitForSingleObject(turnLock, 0) == WAIT_TIMEOUT) { return 0; }
             bool exists = false;
             int xCenter = (xMousePos / gridWidth) * gridWidth + gridWidth / 2;
             int yCenter = (yMousePos / gridHeight) * gridHeight + gridHeight / 2;
@@ -288,7 +356,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             if (exists) {
                 MessageBox(NULL, L"Фигура уже существует в данном поле!", L"Ошибка", MB_OK);
             }
-            else {
+            else if (gameMap[0] % 2 != 0) {
                 int leftC = xCenter - gridWidth / 2;
                 int topC = yCenter - gridHeight / 2;
                 int rightC = xCenter + gridWidth / 2;
@@ -305,35 +373,9 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 int cellNum = ((xCenter - gridWidth / 2) / gridWidth) + n * ((yCenter - gridHeight / 2) / gridHeight) + 1; //Номер клетки, в которую поставили фигуру
                 gameMap[3 * cellNum - 2] = xCenter; //Куда записать коодинату х
                 gameMap[3 * cellNum - 1] = yCenter; //Куда записать коодинату у
-                gameMap[3 * cellNum] = 0; //Тип записанной фигуры
+                gameMap[3 * cellNum] = 1; //Тип записанной фигуры
+                cout << gameMap[3 * cellNum] << endl;
                 gameMap[0]++; //Увеличиваем кол-во фигур
-                ReleaseDC(hwnd, hdc);
-            }
-            GameCheck();
-        }
-        lDown = 0;
-        PostMessage(HWND_BROADCAST, figChange, NULL, NULL);
-        return 0;
-    case WM_RBUTTONDOWN: //Если зажата правая кнопка мышки запомнить местоположение курсора
-        xMousePos = LOWORD(lParam);
-        yMousePos = HIWORD(lParam);
-        rDown = 1;
-        return 0;
-    case WM_RBUTTONUP: //Если отжата правая кнопка мышки нарисовать крест
-        if (rDown)
-        {
-            //Левый верхний угол
-            bool exists = false;
-            int xCenter = (xMousePos / gridWidth) * gridWidth + gridWidth / 2;
-            int yCenter = (yMousePos / gridHeight) * gridHeight + gridHeight / 2;
-            for (int i = 1; i < gameMap[0]; i++) {
-                if (gameMap[i * 3] == xCenter and gameMap[i * 3 + 1] == yCenter) {
-                    exists = true;
-                    break;
-                }
-            }
-            if (exists) {
-                MessageBox(NULL, L"Фигура уже существует в данном поле!", L"Ошибка", MB_OK);
             }
             else {
                 int leftX = (xMousePos / gridWidth) * gridWidth;
@@ -352,12 +394,13 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 int cellNum = ((xCenter - gridWidth / 2) / gridWidth) + n * ((yCenter - gridHeight / 2) / gridHeight) + 1; //Номер клетки, в которую поставили фигуру
                 gameMap[3 * cellNum - 2] = xCenter;
                 gameMap[3 * cellNum - 1] = yCenter;
-                gameMap[3 * cellNum] = 1;
+                gameMap[3 * cellNum] = 2;
+                cout << gameMap[3 * cellNum] << endl;
                 gameMap[0]++;
             }
             GameCheck();
         }
-        rDown = 0;
+        lDown = 0;
         PostMessage(HWND_BROADCAST, figChange, NULL, NULL);
         return 0;
     case WM_PAINT: //Фунцкия рисования фона
@@ -386,7 +429,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 xPos = gameMap[i];
                 yPos = gameMap[i + 1];
                 //cout << gameMap[i] << " " << gameMap[i+1] << " " << gameMap[i+2] << "\n";
-                if (gameMap[i + 2] == 0)
+                if (gameMap[i + 2] == 1)
                 {
                     int leftC = xPos - gridWidth / 2;
                     int topC = yPos - gridHeight / 2;
@@ -397,7 +440,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                     Ellipse(hdc, leftC, topC, rightC, bottomC);
                     DeleteObject(hPen);
                 }
-                else if (gameMap[i + 2] == 1)
+                else if (gameMap[i + 2] == 2)
                 {
                     int leftX = xPos - gridWidth / 2;
                     int topX = yPos - gridHeight / 2;
@@ -595,7 +638,10 @@ int main(int argc, char** argv)
 
     backgroundLock = CreateMutex(NULL, FALSE, NULL);
     CreateThread(NULL, STACK_SIZE, background, (LPVOID)hwnd, 0, NULL);
-
+    if ((turnLock = OpenMutex(NULL, FALSE, szLockName)) == NULL) {
+        turnLock = CreateMutex(NULL, FALSE, szLockName);
+    }
+    
     /* Run the message loop. It will run until GetMessage() returns 0 */
     //Обработка сообщений от приложения
     while ((bMessageOk = GetMessage(&message, NULL, 0, 0)) != 0)
