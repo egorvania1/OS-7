@@ -26,6 +26,7 @@ using namespace std;
 TCHAR szName[] = TEXT("SettingsMappingObject");
 TCHAR szGameName[] = TEXT("GameMappingObject");
 TCHAR szLockName[] = TEXT("TurnLockerObject");
+TCHAR szSemName[] = TEXT("VeryCoolSemaphore");
 
 const TCHAR szWinClass[] = _T("Win32SampleApp");
 const TCHAR szWinName[] = _T("Win32SampleWindow");
@@ -69,8 +70,10 @@ bool lockFlag = false; //Заблокирован ли пользователе�
 bool isBackground = false; //Находится ли поток на фоновом приоритете
 
 HANDLE turnLock; //Мьютекс запрета хода
-
+HANDLE playersSem;
 CRITICAL_SECTION gameover;  
+
+bool isMyTurn = false;
 
 /* Функция запуска блокнота */
 void RunNotepad(void)
@@ -271,11 +274,12 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         InvalidateRect(hwnd, NULL, TRUE);
     }
     else if (message == figChange) {
-        GameCheck();
+        if (isMyTurn) isMyTurn = false;
+        else isMyTurn = true;
         InvalidateRect(hwnd, NULL, TRUE);
     }
     else if (message == gameOver) {
-        ExitProcess(0);
+        PostQuitMessage(0);
     }
     switch (message)                  /* handle the messages */
     {
@@ -348,19 +352,24 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_LBUTTONUP: //Если отжата левая кнопка мышки нарисовать круг
         if (lDown)
         {
-            if (gameMap[0] % 2 != 0 && WaitForSingleObject(turnLock, 0) == WAIT_TIMEOUT || gameMap[0] % 2 == 0 && WaitForSingleObject(turnLock, 0) != WAIT_TIMEOUT) 
-            { return 0; }
+            if (WaitForSingleObject(turnLock, 0) != WAIT_TIMEOUT) 
+            { 
+                return 0; 
+            }
+            SetEvent(turnLock);
             bool exists = false;
             int xCenter = (xMousePos / gridWidth) * gridWidth + gridWidth / 2;
             int yCenter = (yMousePos / gridHeight) * gridHeight + gridHeight / 2;
-            for (int i = 1; i < gameMap[0]; i++) {
-                if (gameMap[i * 3] == xCenter and gameMap[i * 3 + 1] == yCenter) {
+            for (int i = 1; i <= n*n*3; i+=3) {
+                //cout << gameMap[i] << " " << xCenter << endl;
+                if (gameMap[i] == xCenter and gameMap[i + 1] == yCenter) {
                     exists = true;
                     break;
                 }
             }
             if (exists) {
                 MessageBox(NULL, L"Фигура уже существует в данном поле!", L"Ошибка", MB_OK);
+                return 0;
             }
             else if (gameMap[0] % 2 != 0) {
                 int leftC = xCenter - gridWidth / 2;
@@ -372,7 +381,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 hBrush = CreateSolidBrush(RGB(255, 255, 255));
                 SelectObject(hdc, hBrush);
                 SelectObject(hdc, hPen);
-                Ellipse(hdc, leftC, topC, rightC, bottomC);
+                Ellipse(hdc, leftC + 5, topC + 5, rightC - 5, bottomC - 5);
                 DeleteObject(hBrush);
                 DeleteObject(hPen);
                 ReleaseDC(hwnd, hdc);
@@ -380,7 +389,6 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 gameMap[3 * cellNum - 2] = xCenter; //Куда записать коодинату х
                 gameMap[3 * cellNum - 1] = yCenter; //Куда записать коодинату у
                 gameMap[3 * cellNum] = 1; //Тип записанной фигуры
-                cout << gameMap[3 * cellNum] << endl;
                 gameMap[0]++; //Увеличиваем кол-во фигур
             }
             else {
@@ -391,25 +399,28 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 hdc = GetDC(hwnd);
                 hPen = CreatePen(PS_SOLID, 3, RGB(0, 255, 0));
                 SelectObject(hdc, hPen);
-                MoveToEx(hdc, leftX, topX, NULL);
-                LineTo(hdc, rightX, bottomX);
-                MoveToEx(hdc, rightX, topX, NULL);
-                LineTo(hdc, leftX, bottomX);
+                MoveToEx(hdc, leftX + 5, topX + 5, NULL);
+                LineTo(hdc, rightX - 5, bottomX - 5);
+                MoveToEx(hdc, rightX - 5, topX + 5, NULL);
+                LineTo(hdc, leftX + 5, bottomX - 5);
                 DeleteObject(hPen);
                 ReleaseDC(hwnd, hdc);
                 int cellNum = ((xCenter - gridWidth / 2) / gridWidth) + n * ((yCenter - gridHeight / 2) / gridHeight) + 1; //Номер клетки, в которую поставили фигуру
                 gameMap[3 * cellNum - 2] = xCenter;
                 gameMap[3 * cellNum - 1] = yCenter;
                 gameMap[3 * cellNum] = 2;
-                cout << gameMap[3 * cellNum] << endl;
                 gameMap[0]++;
             }
+            PostMessage(HWND_BROADCAST, figChange, NULL, NULL);
             if (GameCheck()) {
+                SetEvent(turnLock);
                 PostMessage(HWND_BROADCAST, gameOver, NULL, NULL);
+            }
+            else {
+                ResetEvent(turnLock);
             }
         }
         lDown = 0;
-        PostMessage(HWND_BROADCAST, figChange, NULL, NULL);
         return 0;
     case WM_PAINT: //Фунцкия рисования фона
         PAINTSTRUCT ps;
@@ -445,7 +456,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                     int bottomC = yPos + gridHeight / 2;
                     hPen = CreatePen(PS_SOLID, 3, RGB(255, 0, 0));
                     SelectObject(hdc, hPen);
-                    Ellipse(hdc, leftC, topC, rightC, bottomC);
+                    Ellipse(hdc, leftC + 5, topC + 5, rightC - 5, bottomC - 5);
                     DeleteObject(hPen);
                 }
                 else if (gameMap[i + 2] == 2)
@@ -456,10 +467,10 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                     int bottomX = topX + gridHeight;
                     hPen = CreatePen(PS_SOLID, 3, RGB(0, 255, 0));
                     SelectObject(hdc, hPen);
-                    MoveToEx(hdc, leftX, topX, NULL);
-                    LineTo(hdc, rightX, bottomX);
-                    MoveToEx(hdc, rightX, topX, NULL);
-                    LineTo(hdc, leftX, bottomX);
+                    MoveToEx(hdc, leftX + 5, topX + 5, NULL);
+                    LineTo(hdc, rightX - 5, bottomX - 5);
+                    MoveToEx(hdc, rightX - 5, topX + 5, NULL);
+                    LineTo(hdc, leftX + 5, bottomX - 5);
                     DeleteObject(hPen);
                 }
             }
@@ -474,6 +485,10 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         return 0;
     case WM_DESTROY: //Уничтожение окна
         EnterCriticalSection(&gameover);
+        ReleaseSemaphore(playersSem, 1, NULL);
+        DeleteObject(backgroundLock);
+        DeleteObject(turnLock);
+        DeleteObject(playersSem);
         PostQuitMessage(0);       /* send a WM_QUIT to the message queue */
         return 0;
     }
@@ -488,6 +503,17 @@ int main(int argc, char** argv)
     SetConsoleOutputCP(1251);
     LPWSTR* szArgList;
     int argCount;
+
+    playersSem = OpenSemaphore(SEMAPHORE_ALL_ACCESS, FALSE, szSemName);
+    if (playersSem == NULL) {
+        cout << "Semaphore not found. Creating..." << endl;
+        playersSem = CreateSemaphore(NULL, 2, 2, szSemName);
+    }
+    if (WaitForSingleObject(playersSem, 0) == WAIT_TIMEOUT) {
+        CloseHandle(playersSem);
+        PostQuitMessage(0);
+    }
+
 
     /*
     * Ввод аргумента:
@@ -648,8 +674,10 @@ int main(int argc, char** argv)
 
     backgroundLock = CreateMutex(NULL, FALSE, NULL);
     CreateThread(NULL, STACK_SIZE, background, (LPVOID)hwnd, 0, NULL);
-    if ((turnLock = OpenMutex(NULL, FALSE, szLockName)) == NULL) {
-        turnLock = CreateMutex(NULL, FALSE, szLockName);
+    turnLock = OpenEvent(NULL, FALSE, szLockName);
+    if (GetLastError() == ERROR_FILE_NOT_FOUND) {
+        cout << "Failed to open Mutex. Creating...";
+        turnLock = CreateEvent(NULL, TRUE, FALSE, szLockName);
     }
     InitializeCriticalSection(&gameover);
     
@@ -683,8 +711,8 @@ int main(int argc, char** argv)
     UnmapViewOfFile(gameMap);
     CloseHandle(hGameMap);
     if (hFile != NULL) { CloseHandle(hFile); }
-    if (backgroundLock != 0) DeleteObject(backgroundLock);
-    if (turnLock != 0) DeleteObject(turnLock);
-    LeaveCriticalSection(&gameover);
+    CloseHandle(turnLock);
+    CloseHandle(backgroundLock);
+    CloseHandle(playersSem);
     return 0;
 }
