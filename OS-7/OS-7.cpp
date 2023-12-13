@@ -22,14 +22,17 @@ using namespace std;
 #define KEY_SHIFTED     0x8000
 #define KEY_TOGGLED     0x0001
 #define STACK_SIZE (64*1024) // Размер стека для нового потока
-#define НОЛИК false // Размер стека для нового потока
-#define КРЕСТИК true // Размер стека для нового потока
+#define НОЛИК 0 // Номер игрока НОЛИК
+#define КРЕСТИК 1 // Номер игрока КРЕСТИК
+#define НАБЛЮДАТЕЛЬ 2 // Номер команды наблюдателей
+#define ЧИСЛО_ОКОН 4 // Кол-во одновременно открытых окон
 
 TCHAR szName[] = L"Global\SettingsMappingObject";
 TCHAR szGameName[] = L"Global\GameMappingObject";
 TCHAR szEventTurn[] = L"Global\turnEventerObject";
 TCHAR szSemName[] = L"Global\VeryCoolSemaphore";
 TCHAR szTeamOfree[] = L"Global\isPlayerOhere";
+TCHAR szTeamXfree[] = L"Global\isPlayerXhere";
 
 const TCHAR szWinClass[] = _T("Win32SampleApp");
 const TCHAR szWinName[] = _T("Win32SampleWindow");
@@ -76,7 +79,8 @@ HANDLE turnEvent; //Мьютекс запрета хода
 HANDLE playersSem; //Семафор кол-ва игроков
 CRITICAL_SECTION gameover; //Секция конца игры
 HANDLE oIsFree; //Есть ли игрок нолик
-bool playerTeam;
+HANDLE xIsFree; //Есть ли игрок крестик
+int playerTeam; //Команда игрока
 
 bool isMyTurn = false;
 
@@ -364,7 +368,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_LBUTTONUP: //Если отжата левая кнопка мышки нарисовать круг
         if (lDown)
         {
-            if (WaitForSingleObject(turnEvent, 100) == WAIT_TIMEOUT) { return 0; }
+            if (WaitForSingleObject(turnEvent, 100) == WAIT_TIMEOUT || playerTeam == НАБЛЮДАТЕЛЬ) { return 0; }
             if ((playerTeam == НОЛИК && gameMap[0] % 2 == 0) || (playerTeam == КРЕСТИК && gameMap[0] % 2 == 1)) {
                 MessageBox(NULL, L"Сейчас не ваш ход!", L"Ошибка", MB_OK);
                 return 0;
@@ -499,6 +503,9 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         if (playerTeam == НОЛИК) {
             SetEvent(oIsFree);
         }
+        else if (playerTeam == КРЕСТИК) {
+            SetEvent(xIsFree);
+        }
         if (ReleaseSemaphore(playersSem, 1, NULL) == 0) {
             cout << "Error releasing semaphore\n";
         }
@@ -521,7 +528,7 @@ int main(int argc, char** argv)
     LPWSTR* szArgList;
     int argCount;
 
-    playersSem = CreateSemaphore(NULL, 2, 2, szSemName);
+    playersSem = CreateSemaphore(NULL, ЧИСЛО_ОКОН, ЧИСЛО_ОКОН, szSemName);
     if (playersSem == NULL) {
         cout << "Semaphore exists." << endl;
         playersSem = OpenSemaphore(SEMAPHORE_ALL_ACCESS, FALSE, szSemName);
@@ -543,9 +550,21 @@ int main(int argc, char** argv)
         cout << "oIsFree event exists.\n";
         oIsFree = OpenEvent(EVENT_ALL_ACCESS, FALSE, szTeamOfree);
     }
+    xIsFree = CreateEvent(NULL, TRUE, TRUE, szTeamXfree);
+    if (xIsFree == NULL) {
+        cout << "oIsFree event exists.\n";
+        xIsFree = OpenEvent(EVENT_ALL_ACCESS, FALSE, szTeamXfree);
+    }
     if (WaitForSingleObject(oIsFree, 0) == WAIT_TIMEOUT) {
-        cout << "I'm a X\n";
-        playerTeam = КРЕСТИК;
+        if (WaitForSingleObject(xIsFree, 0) == WAIT_TIMEOUT) {
+            cout << "I'm a spectator\n";
+            playerTeam = НАБЛЮДАТЕЛЬ;
+        }
+        else {
+            cout << "I'm a X\n";
+            ResetEvent(xIsFree);
+            playerTeam = КРЕСТИК;
+        }
     }
     else {
         cout << "I'm a O\n";
