@@ -22,11 +22,14 @@ using namespace std;
 #define KEY_SHIFTED     0x8000
 #define KEY_TOGGLED     0x0001
 #define STACK_SIZE (64*1024) // Размер стека для нового потока
+#define НОЛИК false // Размер стека для нового потока
+#define КРЕСТИК true // Размер стека для нового потока
 
-TCHAR szName[] = TEXT("SettingsMappingObject");
-TCHAR szGameName[] = TEXT("GameMappingObject");
-TCHAR szLockName[] = TEXT("TurnLockerObject");
-TCHAR szSemName[] = TEXT("VeryCoolSemaphore");
+TCHAR szName[] = L"Global\SettingsMappingObject";
+TCHAR szGameName[] = L"Global\GameMappingObject";
+TCHAR szLockName[] = L"Global\TurnLockerObject";
+TCHAR szSemName[] = L"Global\VeryCoolSemaphore";
+TCHAR szPlayerOExisting[] = L"Global\isPlayerOhere";
 
 const TCHAR szWinClass[] = _T("Win32SampleApp");
 const TCHAR szWinName[] = _T("Win32SampleWindow");
@@ -70,8 +73,10 @@ bool lockFlag = false; //Заблокирован ли пользователе�
 bool isBackground = false; //Находится ли поток на фоновом приоритете
 
 HANDLE turnLock; //Мьютекс запрета хода
-HANDLE playersSem;
-CRITICAL_SECTION gameover;  
+HANDLE playersSem; //Семафор кол-ва игроков
+CRITICAL_SECTION gameover; //Секция конца игры
+HANDLE oIsSet; //Есть ли игрок нолик
+bool playerTeam;
 
 bool isMyTurn = false;
 
@@ -352,11 +357,12 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_LBUTTONUP: //Если отжата левая кнопка мышки нарисовать круг
         if (lDown)
         {
-            if (WaitForSingleObject(turnLock, 0) != WAIT_TIMEOUT) 
-            { 
-                return 0; 
+            if (WaitForSingleObject(turnLock, 100) == WAIT_TIMEOUT) { cout << "timeout\n"; return 0; }
+            if ((playerTeam == НОЛИК && gameMap[0] % 2 == 0) || (playerTeam == КРЕСТИК && gameMap[0] % 2 == 1)) {
+                MessageBox(NULL, L"Сейчас не ваш ход!", L"Ошибка", MB_OK);
+                return 0;
             }
-            SetEvent(turnLock);
+            ResetEvent(turnLock);
             bool exists = false;
             int xCenter = (xMousePos / gridWidth) * gridWidth + gridWidth / 2;
             int yCenter = (yMousePos / gridHeight) * gridHeight + gridHeight / 2;
@@ -411,13 +417,11 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 gameMap[3 * cellNum] = 2;
                 gameMap[0]++;
             }
+            SetEvent(turnLock);
             PostMessage(HWND_BROADCAST, figChange, NULL, NULL);
             if (GameCheck()) {
-                SetEvent(turnLock);
-                PostMessage(HWND_BROADCAST, gameOver, NULL, NULL);
-            }
-            else {
                 ResetEvent(turnLock);
+                PostMessage(HWND_BROADCAST, gameOver, NULL, NULL);
             }
         }
         lDown = 0;
@@ -476,7 +480,6 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             }
         }
 
-
         //for (int i = 0; i <= n * 3 + 1; i++) { if (gameMap[i] != NULL) { cout << gameMap[i] << " "; } } cout << endl;
 
         //Отчистка
@@ -484,11 +487,17 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         EndPaint(hwnd, &ps);
         return 0;
     case WM_DESTROY: //Уничтожение окна
-        EnterCriticalSection(&gameover);
-        ReleaseSemaphore(playersSem, 1, NULL);
-        DeleteObject(backgroundLock);
-        DeleteObject(turnLock);
+        //EnterCriticalSection(&gameover);
+        if (playerTeam == НОЛИК) {
+            SetEvent(oIsSet);
+        }
+        if (ReleaseSemaphore(playersSem, 1, NULL) == 0) {
+            cout << "Error releasing semaphore\n";
+        }
         DeleteObject(playersSem);
+        DeleteObject(oIsSet);
+        DeleteObject(turnLock);
+        DeleteObject(backgroundLock);
         PostQuitMessage(0);       /* send a WM_QUIT to the message queue */
         return 0;
     }
@@ -504,16 +513,37 @@ int main(int argc, char** argv)
     LPWSTR* szArgList;
     int argCount;
 
-    playersSem = OpenSemaphore(SEMAPHORE_ALL_ACCESS, FALSE, szSemName);
+    playersSem = CreateSemaphore(NULL, 2, 2, szSemName);
     if (playersSem == NULL) {
-        cout << "Semaphore not found. Creating..." << endl;
-        playersSem = CreateSemaphore(NULL, 2, 2, szSemName);
+        cout << "Semaphore exists." << endl;
+        playersSem = OpenSemaphore(SEMAPHORE_ALL_ACCESS, FALSE, szSemName);
     }
     if (WaitForSingleObject(playersSem, 0) == WAIT_TIMEOUT) {
         CloseHandle(playersSem);
         PostQuitMessage(0);
     }
 
+    backgroundLock = CreateMutex(NULL, FALSE, NULL);
+    turnLock = CreateEvent(NULL, TRUE, TRUE, szLockName);
+    if (turnLock == NULL) {
+        cout << "turnLock event exists.\n";
+        turnLock = OpenEvent(EVENT_ALL_ACCESS, FALSE, szLockName);
+    }
+
+    oIsSet = CreateEvent(NULL, TRUE, TRUE, szPlayerOExisting);
+    if (oIsSet == NULL) {
+        cout << "oIsSet event exists.\n";
+        oIsSet = OpenEvent(EVENT_ALL_ACCESS, FALSE, szPlayerOExisting);
+    }
+    if (WaitForSingleObject(oIsSet, 0) == WAIT_TIMEOUT) {
+        cout << "I'm a X\n";
+        playerTeam = КРЕСТИК;
+    }
+    else {
+        cout << "I'm a O\n";
+        ResetEvent(oIsSet);
+        playerTeam = НОЛИК;
+    }
 
     /*
     * Ввод аргумента:
@@ -672,13 +702,8 @@ int main(int argc, char** argv)
     /* Make the window visible on the screen */
     ShowWindow(hwnd, nCmdShow);
 
-    backgroundLock = CreateMutex(NULL, FALSE, NULL);
     CreateThread(NULL, STACK_SIZE, background, (LPVOID)hwnd, 0, NULL);
-    turnLock = OpenEvent(NULL, FALSE, szLockName);
-    if (GetLastError() == ERROR_FILE_NOT_FOUND) {
-        cout << "Failed to open Mutex. Creating...";
-        turnLock = CreateEvent(NULL, TRUE, FALSE, szLockName);
-    }
+
     InitializeCriticalSection(&gameover);
     
     /* Run the message loop. It will run until GetMessage() returns 0 */
@@ -706,13 +731,14 @@ int main(int argc, char** argv)
     DestroyWindow(hwnd);
     UnregisterClass(szWinClass, hThisInstance);
     DeleteObject(hBrush);
-    if (buff != 0) { UnmapViewOfFile(buff); }
+    if (buff != 0) UnmapViewOfFile(buff);
     CloseHandle(hMapFile);
     UnmapViewOfFile(gameMap);
     CloseHandle(hGameMap);
-    if (hFile != NULL) { CloseHandle(hFile); }
-    CloseHandle(turnLock);
-    CloseHandle(backgroundLock);
+    if (hFile != NULL) CloseHandle(hFile);
+    if (oIsSet != NULL) CloseHandle(oIsSet);
+    if (turnLock != NULL) CloseHandle(turnLock);
+    if (backgroundLock != NULL) CloseHandle(backgroundLock);
     CloseHandle(playersSem);
     return 0;
 }
