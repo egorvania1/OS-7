@@ -43,7 +43,7 @@ UINT gameOver;
 RECT rect;
 
 char* buff;
-bool isGivenN = false;
+bool isGivenRes = false;
 
 boolean lDown = 0; //Нажат ЛКМ
 boolean rDown = 0; //Нажат ПКМ
@@ -57,7 +57,7 @@ int realWidth = 300;
 int realHeight = 300;
 int width = realWidth - 17;
 int height = realHeight - 39;
-int n = 3;
+const int n = 3;
 #define FIGUREAMOUNT (n*n)*3+1
 int gridR = 0;
 int gridG = 255;
@@ -119,12 +119,11 @@ void GetSettings(char* buffer, bool flag)
             curLine = settings.substr(start, (end - start));
             if (settings[i + 1] != NULL) { start = i + 1; }
             switch (countF) {
-            case 0: {realWidth = stoi(curLine); break; }
-            case 1: {realHeight = stoi(curLine); break; }
-            case 2: {if (flag == 0) { n = stoi(curLine); }; break; }
-            case 3: {gridR = stoi(curLine); break; }
-            case 4: {gridG = stoi(curLine); break; }
-            case 5: {gridB = stoi(curLine); break; }
+            case 0: {if (flag == 0) { realWidth = stoi(curLine); } break; }
+            case 1: {if (flag == 0) { realHeight = stoi(curLine); } break; }
+            case 2: {gridR = stoi(curLine); break; }
+            case 3: {gridG = stoi(curLine); break; }
+            case 4: {gridB = stoi(curLine); break; }
             }
             countF++;
         }
@@ -133,7 +132,7 @@ void GetSettings(char* buffer, bool flag)
 
 void WriteSettings(char* buffer)
 {
-    string set = to_string(realWidth) + "\r\n" + to_string(realHeight) + "\r\n" + to_string(n) + "\r\n" + to_string(gridR) + "\r\n" + to_string(gridG) + "\r\n" + to_string(gridB) + "\r\n";
+    string set = to_string(realWidth) + "\r\n" + to_string(realHeight) + "\r\n" + to_string(gridR) + "\r\n" + to_string(gridG) + "\r\n" + to_string(gridB) + "\r\n";
     char* set_char = new char[set.length() + 1];
     strcpy(set_char, set.c_str());
     size_t size = strlen(set_char);
@@ -270,7 +269,7 @@ DWORD WINAPI background(LPVOID param) {
 LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     if (message == setChange) {
-        GetSettings(buff, isGivenN);
+        GetSettings(buff, isGivenRes);
         SetWindowPos(hwnd, NULL, 0, 0, realWidth, realHeight, SWP_NOMOVE);
         width = realWidth - 17;
         height = realHeight - 39;
@@ -298,6 +297,14 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         }
         return 0;
     case WM_KEYDOWN: //Отработка нажатия клавиатуры
+        if (((GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(0x51) & 0x8000)) || wParam == VK_ESCAPE) //Если нажато Ctrl + Q или Esc закрыть приложение
+        {
+            PostQuitMessage(0);       /* send a WM_QUIT to the message queue */
+        }
+        else if ((GetAsyncKeyState(VK_SHIFT) & 0x8000) && (GetAsyncKeyState(0x43) & 0x8000)) //Если нажато Shift + C открыть блокнот
+        {
+            RunNotepad();
+        }
         switch (wParam) 
         {
         case VK_SPACE:
@@ -556,22 +563,23 @@ int main(int argc, char** argv)
         MessageBox(NULL, L"Ошибка получения аргумента командной строки", L"Ошибка", MB_OK);
         return 10;
     }
-    if (argCount == 2) {
+    if (argCount == 3) {
         try {
-            n = stoi(szArgList[1]); //Тип ввода от аргумента
-            if (n <= 0) {
-                MessageBox(NULL, L"Неверный аргумент ввода файла!", L"Ошибка", MB_OK);
+            realWidth = stoi(szArgList[1]); //Тип ввода от аргумента
+            realHeight = stoi(szArgList[2]); //Тип ввода от аргумента
+            if (realWidth < 100 or realHeight < 100) {
+                MessageBox(NULL, L"Неправильное разрешение окна! Минимум 100х100", L"Ошибка", MB_OK);
                 return 2;
             }
-            isGivenN = true;
+            isGivenRes = true;
         }
         catch (...) {
             MessageBox(NULL, L"В качестве аргумента введён не номер!", L"Ошибка", MB_OK);
             return 10;
         }
     }
-    else if (argCount > 2) {
-        MessageBox(NULL, L"Слишком много аргументов! В качестве аргумента принимается только один номер.\n os-3.exe [размер сетки]", L"Ошибка", MB_OK);
+    else if (argCount != 1) {
+        MessageBox(NULL, L"Неверные аргумент! program.exe width height", L"Ошибка", MB_OK);
         return 11;
     }
     LocalFree(szArgList);
@@ -600,7 +608,7 @@ int main(int argc, char** argv)
         else if (GetLastError() == 183) { fileExists = true; } //Файл существует
         if (!fileExists) { //Создаем карту файла
 
-            string set = to_string(realWidth) + "\r\n" + to_string(realHeight) + "\r\n" + to_string(n) + "\r\n" + to_string(gridR) + "\r\n" + to_string(gridG) + "\r\n" + to_string(gridB) + "\r\n";
+            string set = to_string(realWidth) + "\r\n" + to_string(realHeight) + "\r\n" + to_string(gridR) + "\r\n" + to_string(gridG) + "\r\n" + to_string(gridB) + "\r\n";
             char* set_char = new char[set.length() + 1];
             strcpy(set_char, set.c_str());
             size_t size = strlen(set_char);
@@ -625,7 +633,7 @@ int main(int argc, char** argv)
 
     //Создаем обзор карты файла
     buff = (char*)MapViewOfFile(hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, 0);
-    GetSettings(buff, isGivenN);
+    GetSettings(buff, isGivenRes);
 
     bool mapExists = true;
 
