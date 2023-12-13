@@ -27,9 +27,9 @@ using namespace std;
 
 TCHAR szName[] = L"Global\SettingsMappingObject";
 TCHAR szGameName[] = L"Global\GameMappingObject";
-TCHAR szLockName[] = L"Global\TurnLockerObject";
+TCHAR szEventTurn[] = L"Global\turnEventerObject";
 TCHAR szSemName[] = L"Global\VeryCoolSemaphore";
-TCHAR szPlayerOExisting[] = L"Global\isPlayerOhere";
+TCHAR szTeamOfree[] = L"Global\isPlayerOhere";
 
 const TCHAR szWinClass[] = _T("Win32SampleApp");
 const TCHAR szWinName[] = _T("Win32SampleWindow");
@@ -72,10 +72,10 @@ HANDLE backgroundLock; //Мьютекс изменения фона
 bool lockFlag = false; //Заблокирован ли пользователем мьютекс
 bool isBackground = false; //Находится ли поток на фоновом приоритете
 
-HANDLE turnLock; //Мьютекс запрета хода
+HANDLE turnEvent; //Мьютекс запрета хода
 HANDLE playersSem; //Семафор кол-ва игроков
 CRITICAL_SECTION gameover; //Секция конца игры
-HANDLE oIsSet; //Есть ли игрок нолик
+HANDLE oIsFree; //Есть ли игрок нолик
 bool playerTeam;
 
 bool isMyTurn = false;
@@ -357,12 +357,12 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_LBUTTONUP: //Если отжата левая кнопка мышки нарисовать круг
         if (lDown)
         {
-            if (WaitForSingleObject(turnLock, 100) == WAIT_TIMEOUT) { cout << "timeout\n"; return 0; }
+            if (WaitForSingleObject(turnEvent, 100) == WAIT_TIMEOUT) { return 0; }
             if ((playerTeam == НОЛИК && gameMap[0] % 2 == 0) || (playerTeam == КРЕСТИК && gameMap[0] % 2 == 1)) {
                 MessageBox(NULL, L"Сейчас не ваш ход!", L"Ошибка", MB_OK);
                 return 0;
             }
-            ResetEvent(turnLock);
+            ResetEvent(turnEvent);
             bool exists = false;
             int xCenter = (xMousePos / gridWidth) * gridWidth + gridWidth / 2;
             int yCenter = (yMousePos / gridHeight) * gridHeight + gridHeight / 2;
@@ -417,11 +417,12 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 gameMap[3 * cellNum] = 2;
                 gameMap[0]++;
             }
-            SetEvent(turnLock);
             PostMessage(HWND_BROADCAST, figChange, NULL, NULL);
             if (GameCheck()) {
-                ResetEvent(turnLock);
                 PostMessage(HWND_BROADCAST, gameOver, NULL, NULL);
+            }
+            else {
+                SetEvent(turnEvent);
             }
         }
         lDown = 0;
@@ -489,14 +490,14 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_DESTROY: //Уничтожение окна
         //EnterCriticalSection(&gameover);
         if (playerTeam == НОЛИК) {
-            SetEvent(oIsSet);
+            SetEvent(oIsFree);
         }
         if (ReleaseSemaphore(playersSem, 1, NULL) == 0) {
             cout << "Error releasing semaphore\n";
         }
         DeleteObject(playersSem);
-        DeleteObject(oIsSet);
-        DeleteObject(turnLock);
+        DeleteObject(oIsFree);
+        DeleteObject(turnEvent);
         DeleteObject(backgroundLock);
         PostQuitMessage(0);       /* send a WM_QUIT to the message queue */
         return 0;
@@ -524,24 +525,24 @@ int main(int argc, char** argv)
     }
 
     backgroundLock = CreateMutex(NULL, FALSE, NULL);
-    turnLock = CreateEvent(NULL, TRUE, TRUE, szLockName);
-    if (turnLock == NULL) {
-        cout << "turnLock event exists.\n";
-        turnLock = OpenEvent(EVENT_ALL_ACCESS, FALSE, szLockName);
+    turnEvent = CreateEvent(NULL, TRUE, TRUE, szEventTurn);
+    if (turnEvent == NULL) {
+        cout << "turnEvent event exists.\n";
+        turnEvent = OpenEvent(EVENT_ALL_ACCESS, FALSE, szEventTurn);
     }
 
-    oIsSet = CreateEvent(NULL, TRUE, TRUE, szPlayerOExisting);
-    if (oIsSet == NULL) {
-        cout << "oIsSet event exists.\n";
-        oIsSet = OpenEvent(EVENT_ALL_ACCESS, FALSE, szPlayerOExisting);
+    oIsFree = CreateEvent(NULL, TRUE, TRUE, szTeamOfree);
+    if (oIsFree == NULL) {
+        cout << "oIsFree event exists.\n";
+        oIsFree = OpenEvent(EVENT_ALL_ACCESS, FALSE, szTeamOfree);
     }
-    if (WaitForSingleObject(oIsSet, 0) == WAIT_TIMEOUT) {
+    if (WaitForSingleObject(oIsFree, 0) == WAIT_TIMEOUT) {
         cout << "I'm a X\n";
         playerTeam = КРЕСТИК;
     }
     else {
         cout << "I'm a O\n";
-        ResetEvent(oIsSet);
+        ResetEvent(oIsFree);
         playerTeam = НОЛИК;
     }
 
@@ -736,8 +737,8 @@ int main(int argc, char** argv)
     UnmapViewOfFile(gameMap);
     CloseHandle(hGameMap);
     if (hFile != NULL) CloseHandle(hFile);
-    if (oIsSet != NULL) CloseHandle(oIsSet);
-    if (turnLock != NULL) CloseHandle(turnLock);
+    if (oIsFree != NULL) CloseHandle(oIsFree);
+    if (turnEvent != NULL) CloseHandle(turnEvent);
     if (backgroundLock != NULL) CloseHandle(backgroundLock);
     CloseHandle(playersSem);
     return 0;
